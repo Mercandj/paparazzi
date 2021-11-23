@@ -1,14 +1,20 @@
 apply plugin: 'com.github.ben-manes.versions'
 
 buildscript {
+  ext.repoDir = new File("$rootProject.buildDir/prebuilts/studio/layoutlib")
+
+  // maps to this commit: https://android.googlesource.com/platform/prebuilts/studio/layoutlib/+/852189b
+  // which runs on JDK 11
+  ext.layoutLibPrebuiltSha = '852189b'
+
   ext.versions = [
-    kotlin: '1.5.10',
+    kotlin: '1.5.31',
     agp: '4.2.2',
-    layoutlib: '4.0.0-alpha02-b169460', // "should" be similar to versions.agp
-    androidTools: '27.2.2', // agp + 23.0.0 = androidTools
+    layoutlib: "2020.3.1-$layoutLibPrebuiltSha", // "should" be similar to versions.agp
+    androidTools: '27.1.2', // agp + 23.0.0 = androidTools
     jcodec: '0.2.5',
     moshi: '1.12.0',
-    bytebuddy: '1.11.9',
+    bytebuddy: '1.11.22',
     releasedPaparazzi: '0.7.1'
   ]
 
@@ -17,22 +23,33 @@ buildscript {
       android: "com.android.tools.build:gradle:${versions.agp}",
       kotlin: "org.jetbrains.kotlin:kotlin-gradle-plugin:${versions.kotlin}",
     ],
+    kotlin: [
+      bom: "org.jetbrains.kotlin:kotlin-bom:${versions.kotlin}",
+    ],
     kotlinx: [
       coroutines: [
-        core: 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.1',
+        core: 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.2',
       ],
     ],
     tools: [
       common: "com.android.tools:common:${versions.androidTools}",
-      layoutlib: "com.android.tools.layoutlib:layoutlib-api:26.6.0",
+      layoutlib: "com.android.tools.layoutlib:layoutlib-api:27.2.2",
       sdkcommon: "com.android.tools:sdk-common:26.6.4",
     ],
     kxml2: 'kxml2:kxml2:2.3.0',
     androidx: [
-      annotations: 'androidx.annotation:annotation:1.2.0'
+      annotations: 'androidx.annotation:annotation:1.3.0'
     ],
-    layoutlib: "app.cash.paparazzi:layoutlib-jdk11:${versions.layoutlib}",
-    okio: 'com.squareup.okio:okio:2.10.0',
+    layoutlib: [
+      native: [
+        jdk11: "app.cash.paparazzi:layoutlib-native-jdk11:${versions.layoutlib}",
+        macArm: "app.cash.paparazzi:layoutlib-native-macarm:${versions.layoutlib}",
+        macOsX: "app.cash.paparazzi:layoutlib-native-macosx:${versions.layoutlib}",
+        windows: "app.cash.paparazzi:layoutlib-native-win:${versions.layoutlib}",
+        linux: "app.cash.paparazzi:layoutlib-native-linux:${versions.layoutlib}",
+      ]
+    ],
+    okio: 'com.squareup.okio:okio:3.0.0',
     moshi: [
       core: "com.squareup.moshi:moshi:${versions.moshi}",
       adapters: "com.squareup.moshi:moshi-adapters:${versions.moshi}",
@@ -46,11 +63,11 @@ buildscript {
       core: "net.bytebuddy:byte-buddy:${versions.bytebuddy}",
       agent: "net.bytebuddy:byte-buddy-agent:${versions.bytebuddy}",
     ],
-    guava: 'com.google.guava:guava:30.1.1-jre',
+    guava: 'com.google.guava:guava:31.0.1-jre',
     junit: 'junit:junit:4.13.2',
     truth: 'com.google.truth:truth:1.1.3',
-    assertj: 'org.assertj:assertj-core:3.20.2',
-    testparameterinjector: 'com.google.testparameterinjector:test-parameter-injector:1.4',
+    assertj: 'org.assertj:assertj-core:3.21.0',
+    testparameterinjector: 'com.google.testparameterinjector:test-parameter-injector:1.5',
   ]
 
   repositories {
@@ -63,8 +80,10 @@ buildscript {
   dependencies {
     classpath deps.plugins.kotlin
     classpath deps.plugins.android
+    classpath 'com.vanniktech:gradle-maven-publish-plugin:0.18.0'
+    classpath 'org.ajoberstar.grgit:grgit-gradle:4.1.0'
     classpath 'com.github.ben-manes:gradle-versions-plugin:0.39.0'
-    classpath 'org.jetbrains.dokka:dokka-gradle-plugin:1.5.0'
+    classpath 'org.jetbrains.dokka:dokka-gradle-plugin:1.5.31'
     classpath "app.cash.paparazzi:paparazzi-gradle-plugin:${versions.releasedPaparazzi}"
   }
 }
@@ -99,12 +118,67 @@ subprojects {
       jvmTarget = "1.8"
     }
   }
+
+  plugins.withId('com.vanniktech.maven.publish') {
+    publishing {
+      repositories {
+        maven {
+          name = "projectLocalMaven"
+          url = "${rootProject.buildDir}/localMaven"
+        }
+        /**
+         * Want to push to an internal repository for testing?
+         * Set the following properties in ~/.gradle/gradle.properties.
+         *
+         * internalUrl=YOUR_INTERNAL_URL
+         * internalUsername=YOUR_USERNAME
+         * internalPassword=YOUR_PASSWORD
+         */
+        maven {
+          name = "internal"
+          url = providers.gradleProperty("internalUrl").forUseAtConfigurationTime()
+          credentials(PasswordCredentials)
+        }
+      }
+    }
+
+    mavenPublish {
+      releaseSigningEnabled = hasProperty('signingKey')
+    }
+  }
+
+  tasks.register('emptySourcesJar', Jar) {
+    // TODO: fetch sources from the corresponding AOSP repos.
+    archiveClassifier = 'sources'
+  }
+
+  tasks.register('emptyJavadocJar', Jar) {
+    archiveClassifier = 'javadoc'
+  }
 }
 
-task clean(type: Delete) {
+tasks.register("clean", Delete).configure {
   delete rootProject.buildDir
 }
 
-tasks.wrapper {
+tasks.named("wrapper").configure {
   distributionType = Wrapper.DistributionType.ALL
+}
+
+allprojects { project ->
+  tasks.register("mavenLocalize").configure { task ->
+    def projectRootDir = project.projectDir
+    task.doFirst {
+      projectRootDir.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+        if (file.name != 'build.gradle') {
+          return
+        }
+        def text = file.text
+        file.withWriter { w ->
+          // Intentional concatenation to prevent self-replacement
+          w << text.replace("//" + "mavenLocal()", "mavenLocal()")
+        }
+      }
+    }
+  }
 }

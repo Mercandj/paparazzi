@@ -1,6 +1,54 @@
 Change Log
 ==========
 
+## Version 0.9.0
+_2021-11-22_
+
+### New
+* Migrate Paparazzi to layoutlib Arctic Fox 2020.3.1, providing native support for M1 machines 
+* Migrate Paparazzi to layoutlib 4.2, unlocking future Compose support
+* Add support for projects enabling non-transitive resources
+* RenderExtension now visits view hierarchy pre-rendering instead of layering bitmaps post-rendering
+* Fail-fast when Bridge.init fails, usually due to native crash
+* Expose RenderingMode as a configurable option
+* Bump default compileSdk to API 30
+* Improve Java-interoperability experience
+* Kotlin 1.5.31
+
+### Fixed
+* Don't require Android plugin to be declared before Paparazzi plugin
+* Clear AnimationHandler leak after each snapshot
+* Don't generate empty mov files on snapshot failure
+* Add Kotlin platform bom to prevent classpath conflicts during test builds
+* Use correct default Android SDK path on Windows
+* Use platform-agnostic file paths in Gradle artifacts to support remote caching across platforms  
+* Use platform-agnostic file paths in Javascript for web page support on Windows  
+* Fix font scaling issue in AccessibilityRenderExtension by using bundled font
+
+Kudos to @luis-cortes, @geoff-powell and @TWiStErRob for their contributions this release!
+
+
+## Version 0.8.0
+_2021-10-07_
+
+### New
+* Migrate Paparazzi to use native layoutlib for better rendering and API 30 support
+* Add new extension for rendering accessibility metadata
+* Add support for fontScale in DeviceConfig
+* Add device config for Pixel 5
+* Add tasks to Gradle task verification group
+* Migrate publishing to gradle-maven-publish-plugin
+* Migrate builds to Github Actions
+* Migrate sample test from Burst to TestParameterInjector
+* Kotlin 1.5.21
+* [Gradle Plugin] Support for configuration caching
+* [Gradle Plugin] Gradle 7.2
+
+### Fixed
+* Add method interceptor for matrix multiplication operations
+* Don't swallow FileNotFoundExceptions when overridden platform dir doesn't exist
+* [Gradle Plugin] Fix remote caching bug by referencing relative, not absolute, paths in intermediate resources file.
+
 ## Version 0.7.1
 _2021-05-17_
 

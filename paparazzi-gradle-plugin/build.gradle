@@ -1,5 +1,6 @@
 apply plugin: 'org.jetbrains.kotlin.jvm'
 apply plugin: 'java-gradle-plugin'
+apply plugin: 'com.vanniktech.maven.publish'
 
 gradlePlugin {
   plugins {
@@ -12,6 +13,7 @@ gradlePlugin {
 
 dependencies {
   compileOnly gradleApi()
+  implementation platform(deps.kotlin.bom)
   implementation deps.plugins.kotlin
   implementation deps.plugins.android
 
@@ -27,6 +29,7 @@ def generateVersion = tasks.register("pluginVersion") {
   def outputDir = file('src/generated/kotlin')
 
   inputs.property 'version', version
+  inputs.property 'nativeLibVersion', versions.layoutlib
   outputs.dir outputDir
 
   doLast {
@@ -35,6 +38,7 @@ def generateVersion = tasks.register("pluginVersion") {
     versionFile.text = """// Generated file. Do not edit!
 package app.cash.paparazzi
 const val VERSION = "${project.version}"
+const val NATIVE_LIB_VERSION = "${project.versions.layoutlib}"
 """
   }
 }
@@ -44,8 +48,8 @@ tasks.named('compileKotlin').configure {
 }
 
 test {
-  dependsOn(":paparazzi:installLocally")
-  dependsOn(":paparazzi-agent:installLocally")
+  dependsOn(':paparazzi:publishMavenPublicationToProjectLocalMavenRepository')
+  dependsOn(':paparazzi-agent:publishMavenPublicationToProjectLocalMavenRepository')
 
   testLogging {
     events 'passed', 'failed', 'skipped'
@@ -55,8 +59,6 @@ test {
     showCauses true
   }
 }
-
-apply from: "$rootDir/gradle/gradle-mvn-push.gradle"
 
 // When cleaning this project, we also want to clean the test projects.
 tasks.named("clean").configure { cleaner ->

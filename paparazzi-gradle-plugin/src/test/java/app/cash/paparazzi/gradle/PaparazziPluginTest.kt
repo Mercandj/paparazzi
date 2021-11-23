@@ -31,8 +31,19 @@ class PaparazziPluginTest {
 
     assertThat(result.task(":preparePaparazziDebugResources")).isNull()
     assertThat(result.output).contains(
-        "The Android Gradle library plugin must be applied before the Paparazzi plugin."
+        "The Android Gradle library plugin must be applied for Paparazzi to be configured."
     )
+  }
+
+  @Test
+  fun declareAndroidPluginAfter() {
+    val fixtureRoot = File("src/test/projects/declare-android-plugin-after")
+
+    val result = gradleRunner
+        .withArguments("preparePaparazziDebugResources", "--stacktrace")
+        .runFixture(fixtureRoot) { build() }
+
+    assertThat(result.task(":preparePaparazziDebugResources")).isNotNull()
   }
 
   @Test
@@ -46,7 +57,7 @@ class PaparazziPluginTest {
 
     assertThat(result.task(":testDebug")).isNull()
     assertThat(result.output).contains("java.io.FileNotFoundException")
-    assertThat(result.output).contains("platforms/android-oops")
+    assertThat(result.output).contains("platforms" + File.separator + "android-oops")
   }
 
   @Test
@@ -96,6 +107,17 @@ class PaparazziPluginTest {
     }
 
     fixtureRoot.resolve("build-cache").deleteRecursively()
+  }
+
+  @Test
+  fun configurationCache() {
+    val fixtureRoot = File("src/test/projects/configuration-cache")
+
+    // check to avoid plugin regressions that might affect Gradle's configuration caching
+    // https://docs.gradle.org/current/userguide/configuration_cache.html
+    gradleRunner
+      .withArguments("testDebug", "--configuration-cache", "--stacktrace")
+      .runFixture(fixtureRoot) { build() }
   }
 
   @Test
@@ -443,6 +465,27 @@ class PaparazziPluginTest {
   }
 
   @Test
+  fun verifyRenderingModes() {
+    val fixtureRoot = File("src/test/projects/verify-rendering-modes")
+
+    gradleRunner
+      .withArguments("testDebug", "--stacktrace")
+      .runFixture(fixtureRoot) { build() }
+
+    val snapshotsDir = File(fixtureRoot, "build/reports/paparazzi/images")
+    val snapshots = snapshotsDir.listFiles().apply { sortBy { it.lastModified() }}
+    assertThat(snapshots!!).hasLength(3)
+
+    val normal = File(fixtureRoot, "src/test/resources/normal.png")
+    val horizontalScroll = File(fixtureRoot, "src/test/resources/horizontal_scroll.png")
+    val verticalScroll = File(fixtureRoot, "src/test/resources/vertical_scroll.png")
+
+    assertThat(snapshots[0]).isSimilarTo(normal).withDefaultThreshold()
+    assertThat(snapshots[1]).isSimilarTo(horizontalScroll).withDefaultThreshold()
+    assertThat(snapshots[2]).isSimilarTo(verticalScroll).withDefaultThreshold()
+  }
+
+  @Test
   fun verifyResourcesGeneratedForJavaProject() {
     val fixtureRoot = File("src/test/projects/verify-resources-java")
 
@@ -459,6 +502,7 @@ class PaparazziPluginTest {
     assertThat(resourceFileContents[0]).isEqualTo("app.cash.paparazzi.plugin.test")
     assertThat(resourceFileContents[1]).isEqualTo("build/intermediates/res/merged/debug")
     assertThat(resourceFileContents[4]).isEqualTo("build/intermediates/library_assets/debug/out")
+    assertThat(resourceFileContents[6]).isEqualTo("app.cash.paparazzi.plugin.test")
   }
 
   @Test
@@ -478,6 +522,7 @@ class PaparazziPluginTest {
     assertThat(resourceFileContents[0]).isEqualTo("app.cash.paparazzi.plugin.test")
     assertThat(resourceFileContents[1]).isEqualTo("build/intermediates/res/merged/debug")
     assertThat(resourceFileContents[4]).isEqualTo("build/intermediates/library_assets/debug/out")
+    assertThat(resourceFileContents[6]).isEqualTo("app.cash.paparazzi.plugin.test")
   }
 
   @Test
@@ -494,8 +539,8 @@ class PaparazziPluginTest {
     assertThat(resourcesFile.exists()).isTrue()
 
     val resourceFileContents = resourcesFile.readLines()
-    assertThat(resourceFileContents[2]).isEqualTo("29")
-    assertThat(resourceFileContents[3]).isEqualTo("platforms/android-29/")
+    assertThat(resourceFileContents[2]).isEqualTo("30")
+    assertThat(resourceFileContents[3]).isEqualTo("platforms/android-30/")
   }
 
   @Test
@@ -512,8 +557,8 @@ class PaparazziPluginTest {
     assertThat(resourcesFile.exists()).isTrue()
 
     val resourceFileContents = resourcesFile.readLines()
-    assertThat(resourceFileContents[2]).isEqualTo("27")
-    assertThat(resourceFileContents[3]).isEqualTo("platforms/android-29/")
+    assertThat(resourceFileContents[2]).isEqualTo("29")
+    assertThat(resourceFileContents[3]).isEqualTo("platforms/android-30/")
   }
 
   @Test
@@ -526,29 +571,6 @@ class PaparazziPluginTest {
   }
 
   @Test
-  fun verifySnapshot_withoutFonts() {
-    val fixtureRoot = File("src/test/projects/verify-snapshot")
-
-    val result = gradleRunner
-        .withArguments("testDebug", "--stacktrace")
-        .runFixture(fixtureRoot) { build() }
-
-    assertThat(result.task(":preparePaparazziDebugResources")).isNotNull()
-    assertThat(result.task(":testDebugUnitTest")).isNotNull()
-
-    val snapshotsDir = File(fixtureRoot, "build/reports/paparazzi/images")
-    val snapshotFile = File(snapshotsDir, "6fca3e0a7f717916b1636195184e9f61c524369b.png")
-    assertThat(snapshotFile.exists()).isTrue()
-
-    val goldenImage = File(fixtureRoot, "src/test/resources/launch_without_fonts.png")
-    val actualFileBytes = Files.readAllBytes(snapshotFile.toPath())
-    val expectedFileBytes = Files.readAllBytes(goldenImage.toPath())
-
-    assertThat(actualFileBytes).isEqualTo(expectedFileBytes)
-  }
-
-  @Test
-  @Ignore
   fun verifySnapshot() {
     val fixtureRoot = File("src/test/projects/verify-snapshot")
 
@@ -560,14 +582,12 @@ class PaparazziPluginTest {
     assertThat(result.task(":testDebugUnitTest")).isNotNull()
 
     val snapshotsDir = File(fixtureRoot, "build/reports/paparazzi/images")
-    val snapshotFile = File(snapshotsDir, "06eed37f8377a96128efdbfd47e28b24ecac09e6.png")
-    assertThat(snapshotFile.exists()).isTrue()
+    val snapshots = snapshotsDir.listFiles()
+    assertThat(snapshots!!).hasLength(1)
 
+    val snapshotImage = snapshots[0]
     val goldenImage = File(fixtureRoot, "src/test/resources/launch.png")
-    val actualFileBytes = Files.readAllBytes(snapshotFile.toPath())
-    val expectedFileBytes = Files.readAllBytes(goldenImage.toPath())
-
-    assertThat(actualFileBytes).isEqualTo(expectedFileBytes)
+    assertThat(snapshotImage).isSimilarTo(goldenImage).withDefaultThreshold()
   }
 
   @Test
@@ -620,6 +640,24 @@ class PaparazziPluginTest {
 
     val snapshotImage = snapshots[0]
     val goldenImage = File(fixtureRoot, "src/test/resources/arrow_present.png")
+    assertThat(snapshotImage).isSimilarTo(goldenImage).withDefaultThreshold()
+  }
+
+  @Test
+  @Ignore
+  fun withMaterialComponents() {
+    val fixtureRoot = File("src/test/projects/material-components-present")
+
+    gradleRunner
+      .withArguments("testDebug", "--stacktrace")
+      .runFixture(fixtureRoot) { build() }
+
+    val snapshotsDir = File(fixtureRoot, "build/reports/paparazzi/images")
+    val snapshots = snapshotsDir.listFiles()
+    assertThat(snapshots!!).hasLength(1)
+
+    val snapshotImage = snapshots[0]
+    val goldenImage = File(fixtureRoot, "src/test/resources/button.png")
     assertThat(snapshotImage).isSimilarTo(goldenImage).withDefaultThreshold()
   }
 
@@ -722,6 +760,24 @@ class PaparazziPluginTest {
 
     val snapshotImage = snapshots[0]
     val goldenImage = File(fixtureRoot, "src/test/resources/card_chip.png")
+    assertThat(snapshotImage).isSimilarTo(goldenImage).withDefaultThreshold()
+  }
+
+  @Test
+  fun nonTransitiveResources() {
+    val fixtureRoot = File("src/test/projects/non-transitive-resources")
+    val moduleRoot = File(fixtureRoot, "module")
+
+    gradleRunner
+      .withArguments("module:testDebug", "--stacktrace")
+      .runFixture(fixtureRoot, moduleRoot) { build() }
+
+    val snapshotsDir = File(moduleRoot, "build/reports/paparazzi/images")
+    val snapshots = snapshotsDir.listFiles()
+    assertThat(snapshots!!).hasLength(1)
+
+    val snapshotImage = snapshots[0]
+    val goldenImage = File(moduleRoot, "src/test/resources/five_bucks.png")
     assertThat(snapshotImage).isSimilarTo(goldenImage).withDefaultThreshold()
   }
 

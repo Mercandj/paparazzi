@@ -17,6 +17,7 @@ package app.cash.paparazzi
 
 import java.io.File
 import java.nio.file.Paths
+import java.util.Locale
 
 data class Environment(
   val platformDir: String,
@@ -24,12 +25,15 @@ data class Environment(
   val resDir: String,
   val assetsDir: String,
   val packageName: String,
-  val compileSdkVersion: Int)
+  val compileSdkVersion: Int,
+  val platformDataDir: String,
+  val resourcePackageNames: List<String>,
+)
 
 @Suppress("unused")
 fun androidHome() = System.getenv("ANDROID_SDK_ROOT")
     ?: System.getenv("ANDROID_HOME")
-    ?: "${System.getProperty("user.home")}/Library/Android/sdk"
+    ?: androidSdkPath()
 
 fun detectEnvironment(): Environment {
   checkInstalledJvm()
@@ -45,8 +49,21 @@ fun detectEnvironment(): Environment {
       resDir = appTestDir.resolve(configLines[1]).toString(),
       assetsDir = appTestDir.resolve(configLines[4]).toString(),
       packageName = configLines[0],
-      compileSdkVersion = configLines[2].toInt()
+      compileSdkVersion = configLines[2].toInt(),
+      platformDataDir = configLines[5],
+      resourcePackageNames = configLines[6].split(",")
   )
+}
+
+private fun androidSdkPath(): String {
+  val osName = System.getProperty("os.name").lowercase(Locale.US)
+  val sdkPathDir = if (osName.startsWith("windows")) {
+    "\\AppData\\Local\\Android\\Sdk"
+  } else {
+    "/Library/Android/sdk"
+  }
+  val homeDir = System.getProperty("user.home")
+  return homeDir + sdkPathDir
 }
 
 private fun checkInstalledJvm() {

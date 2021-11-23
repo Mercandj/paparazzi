@@ -15,15 +15,26 @@
  */
 package app.cash.paparazzi.gradle
 
+import app.cash.paparazzi.NATIVE_LIB_VERSION
 import app.cash.paparazzi.VERSION
+import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.LibraryExtension
+import com.android.ide.common.symbols.getPackageNameFromManifest
+import org.gradle.api.Action
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.Task
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+import org.gradle.api.attributes.Attribute
+import org.gradle.api.internal.artifacts.ArtifactAttributes
+import org.gradle.api.internal.artifacts.transform.UnzipTransform
 import org.gradle.api.logging.LogLevel.LIFECYCLE
 import org.gradle.api.plugins.JavaBasePlugin
 import org.gradle.api.tasks.options.Option
 import org.gradle.api.tasks.testing.Test
+import org.gradle.internal.os.OperatingSystem
 import org.gradle.language.base.plugins.LifecycleBasePlugin.VERIFICATION_GROUP
 import org.jetbrains.kotlin.gradle.plugin.KotlinBasePluginWrapper
 import java.util.Locale
@@ -32,13 +43,17 @@ import java.util.Locale
 class PaparazziPlugin : Plugin<Project> {
   @OptIn(ExperimentalStdlibApi::class)
   override fun apply(project: Project) {
-    require(project.plugins.hasPlugin("com.android.library")) {
-      "The Android Gradle library plugin must be applied before the Paparazzi plugin."
+    project.afterEvaluate {
+      require(project.plugins.hasPlugin("com.android.library")) {
+        "The Android Gradle library plugin must be applied for Paparazzi to be configured."
+      }
     }
 
-    project.configurations.getByName("testImplementation").dependencies.add(
-        project.dependencies.create("app.cash.paparazzi:paparazzi:$VERSION")
-    )
+    project.plugins.withId("com.android.library") { setupPaparazzi(project) }
+  }
+
+  private fun setupPaparazzi(project: Project) {
+    val unzipConfiguration = project.setupPlatformDataTransform()
 
     // Create anchor tasks for all variants.
     val verifyVariants = project.tasks.register("verifyPaparazzi")
@@ -54,11 +69,30 @@ class PaparazziPlugin : Plugin<Project> {
       val reportOutputDir = project.layout.buildDirectory.dir("reports/paparazzi")
       val snapshotOutputDir = project.layout.projectDirectory.dir("src/test/snapshots")
 
+      val packageAwareArtifacts = project.configurations.getByName("${variant.name}RuntimeClasspath")
+        .incoming
+        .artifactView {
+          it.attributes.attribute(
+            Attribute.of("artifactType", String::class.java), "android-symbol-with-package-name"
+          )
+        }
+        .artifacts
+
       val writeResourcesTask = project.tasks.register(
           "preparePaparazzi${variantSlug}Resources", PrepareResourcesTask::class.java
       ) { task ->
+        val android = project.extensions.getByType(BaseExtension::class.java)
+        val nonTransitiveRClassEnabled =
+          (project.findProperty("android.nonTransitiveRClass") as? String).toBoolean()
+
+        task.packageName.set(android.packageName())
+        task.artifactFiles.from(packageAwareArtifacts.artifactFiles)
+        task.nonTransitiveRClassEnabled.set(nonTransitiveRClassEnabled)
         task.mergeResourcesOutput.set(mergeResourcesOutputDir)
+        task.targetSdkVersion.set(android.targetSdkVersion())
+        task.compileSdkVersion.set(android.compileSdkVersion())
         task.mergeAssetsOutput.set(mergeAssetsOutputDir)
+        task.platformDataRoot.set(unzipConfiguration.singleFile)
         task.paparazziResources.set(project.layout.buildDirectory.file("intermediates/paparazzi/${variant.name}/resources.txt"))
       }
 
@@ -83,6 +117,14 @@ class PaparazziPlugin : Plugin<Project> {
       }
       verifyVariants.configure { it.dependsOn(verifyTaskProvider) }
 
+      val isRecordRun = project.objects.property(Boolean::class.java)
+      val isVerifyRun = project.objects.property(Boolean::class.java)
+
+      project.gradle.taskGraph.whenReady { graph ->
+        isRecordRun.set(graph.hasTask(recordTaskProvider.get()))
+        isVerifyRun.set(graph.hasTask(verifyTaskProvider.get()))
+      }
+
       val testTaskProvider = project.tasks.named("test${testVariantSlug}", Test::class.java) { test ->
         test.systemProperties["paparazzi.test.resources"] =
             writeResourcesTask.flatMap { it.paparazziResources.asFile }.get().path
@@ -92,25 +134,31 @@ class PaparazziPlugin : Plugin<Project> {
         test.outputs.dir(reportOutputDir)
         test.outputs.dir(snapshotOutputDir)
 
-        test.doFirst {
-          test.systemProperties["paparazzi.test.record"] =
-              project.gradle.taskGraph.hasTask(recordTaskProvider.get())
-          test.systemProperties["paparazzi.test.verify"] =
-              project.gradle.taskGraph.hasTask(verifyTaskProvider.get())
-          val paparazziProperties =
-            project.properties.filterKeys { it.startsWith("app.cash.paparazzi") }
-          test.systemProperties.putAll(paparazziProperties)
-        }
+        val paparazziProperties = project.properties.filterKeys { it.startsWith("app.cash.paparazzi") }
+
+        @Suppress("ObjectLiteralToLambda")
+        // why not a lambda?  See: https://docs.gradle.org/7.2/userguide/validation_problems.html#implementation_unknown
+        test.doFirst(object : Action<Task> {
+          override fun execute(t: Task) {
+            test.systemProperties["paparazzi.test.record"] = isRecordRun.get()
+            test.systemProperties["paparazzi.test.verify"] = isVerifyRun.get()
+            test.systemProperties.putAll(paparazziProperties)
+          }
+        })
       }
 
       recordTaskProvider.configure { it.dependsOn(testTaskProvider) }
       verifyTaskProvider.configure { it.dependsOn(testTaskProvider) }
 
-      testTaskProvider.configure {
-        it.doLast {
-          val uri = reportOutputDir.get().asFile.toPath().resolve("index.html").toUri()
-          project.logger.log(LIFECYCLE, "See the Paparazzi report at: $uri")
-        }
+      testTaskProvider.configure { test ->
+        @Suppress("ObjectLiteralToLambda")
+        // why not a lambda?  See: https://docs.gradle.org/7.2/userguide/validation_problems.html#implementation_unknown
+        test.doLast(object : Action<Task> {
+          override fun execute(t: Task) {
+            val uri = reportOutputDir.get().asFile.toPath().resolve("index.html").toUri()
+            test.logger.log(LIFECYCLE, "See the Paparazzi report at: $uri")
+          }
+        })
       }
     }
   }
@@ -124,4 +172,55 @@ class PaparazziPlugin : Plugin<Project> {
       return this
     }
   }
+
+  private fun Project.setupPlatformDataTransform(): Configuration {
+    configurations.getByName("testImplementation").dependencies.add(
+        dependencies.create("app.cash.paparazzi:paparazzi:$VERSION")
+    )
+
+    val unzipConfiguration = configurations.create("unzip")
+    unzipConfiguration.attributes.attribute(
+        ArtifactAttributes.ARTIFACT_FORMAT, ArtifactTypeDefinition.DIRECTORY_TYPE
+    )
+    configurations.add(unzipConfiguration)
+
+    val operatingSystem = OperatingSystem.current()
+    val nativeLibraryArtifactId = when {
+      operatingSystem.isMacOsX -> "macosx"
+      operatingSystem.isWindows -> "win"
+      else -> "linux"
+    }
+    unzipConfiguration.dependencies.add(
+        dependencies.create("app.cash.paparazzi:layoutlib-native-$nativeLibraryArtifactId:$NATIVE_LIB_VERSION")
+    )
+    dependencies.registerTransform(UnzipTransform::class.java) { transform ->
+      transform.from.attribute(ArtifactAttributes.ARTIFACT_FORMAT, ArtifactTypeDefinition.JAR_TYPE)
+      transform.to.attribute(
+          ArtifactAttributes.ARTIFACT_FORMAT, ArtifactTypeDefinition.DIRECTORY_TYPE
+      )
+    }
+
+    return unzipConfiguration
+  }
+
+  private fun BaseExtension.packageName(): String {
+    sourceSets
+      .map { it.manifest.srcFile }
+      .filter { it.exists() }
+      .forEach {
+        return getPackageNameFromManifest(it)
+      }
+    throw IllegalStateException("No source sets available")
+  }
+
+  private fun BaseExtension.compileSdkVersion(): String {
+    return compileSdkVersion!!.substringAfter("android-", DEFAULT_COMPILE_SDK_VERSION.toString())
+  }
+
+  private fun BaseExtension.targetSdkVersion(): String {
+    return defaultConfig.targetSdkVersion?.apiLevel?.toString()
+      ?: DEFAULT_COMPILE_SDK_VERSION.toString()
+  }
 }
+
+private const val DEFAULT_COMPILE_SDK_VERSION = 30

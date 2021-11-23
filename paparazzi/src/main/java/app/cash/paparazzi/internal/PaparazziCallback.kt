@@ -18,7 +18,6 @@ package app.cash.paparazzi.internal
 
 import app.cash.paparazzi.internal.parsers.LayoutPullParser
 import app.cash.paparazzi.internal.parsers.TagSnapshot
-import com.android.SdkConstants
 import com.android.ide.common.rendering.api.ActionBarCallback
 import com.android.ide.common.rendering.api.AdapterBinding
 import com.android.ide.common.rendering.api.ILayoutPullParser
@@ -44,7 +43,8 @@ import java.lang.reflect.Modifier
 
 internal class PaparazziCallback(
   private val logger: PaparazziLogger,
-  private val packageName: String
+  private val packageName: String,
+  private val resourcePackageNames: List<String>
 ) : LayoutlibCallback() {
   private val projectResources = mutableMapOf<Int, ResourceReference>()
   private val resources = mutableMapOf<ResourceReference, Int>()
@@ -54,31 +54,34 @@ internal class PaparazziCallback(
   private var adaptiveIconMaskPath: String? = null
   private var highQualityShadow = false
   private var enableShadow = true
+  private val loadedClasses = mutableMapOf<String, Class<*>>()
 
   @Throws(ClassNotFoundException::class)
   fun initResources() {
-    val rClass = Class.forName("$packageName.R")
-    for (resourceClass in rClass.declaredClasses) {
-      val resourceType = ResourceType.getEnum(resourceClass.simpleName) ?: continue
+    for (rPackageName in resourcePackageNames) {
+      val rClass = Class.forName("$rPackageName.R")
+      for (resourceClass in rClass.declaredClasses) {
+        val resourceType = ResourceType.fromClassName(resourceClass.simpleName) ?: continue
 
-      for (field in resourceClass.declaredFields) {
-        if (!Modifier.isStatic(field.modifiers)) continue
+        for (field in resourceClass.declaredFields) {
+          if (!Modifier.isStatic(field.modifiers)) continue
 
-        // May not be final in library projects.
-        val type = field.type
-        try {
-          if (type == Int::class.javaPrimitiveType) {
-            val value = field.get(null) as Int
-            val reference = ResourceReference(RES_AUTO, resourceType, field.name)
-            projectResources[value] = reference
-            resources[reference] = value
-          } else if (type.isArray && type.componentType == Int::class.javaPrimitiveType) {
-            // Ignore.
-          } else {
-            logger.error(null, "Unknown field type in R class: $type")
+          // May not be final in library projects.
+          val type = field.type
+          try {
+            if (type == Int::class.javaPrimitiveType) {
+              val value = field.get(null) as Int
+              val reference = ResourceReference(RES_AUTO, resourceType, field.name)
+              projectResources[value] = reference
+              resources[reference] = value
+            } else if (type.isArray && type.componentType == Int::class.javaPrimitiveType) {
+              // Ignore.
+            } else {
+              logger.error(null, "Unknown field type in R class: $type")
+            }
+          } catch (e: IllegalAccessException) {
+            logger.error(e, "Malformed R class: %1\$s", "$rPackageName.R")
           }
-        } catch (e: IllegalAccessException) {
-          logger.error(e, "Malformed R class: %1\$s", "$packageName.R")
         }
       }
     }
@@ -95,9 +98,6 @@ internal class PaparazziCallback(
     viewConstructor.isAccessible = true
     return viewConstructor.newInstance(*constructorArgs)
   }
-
-  override fun getNamespace(): String =
-    String.format(SdkConstants.NS_CUSTOM_RESOURCES_S, packageName)
 
   override fun resolveResourceId(id: Int): ResourceReference? = projectResources[id]
 
@@ -150,8 +150,6 @@ internal class PaparazziCallback(
 
   override fun getActionBarCallback(): ActionBarCallback = actionBarCallback
 
-  override fun supports(ideFeature: Int): Boolean = false
-
   override fun createXmlParserForPsiFile(fileName: String): XmlPullParser? =
     createXmlParserForFile(fileName)
 
@@ -195,6 +193,28 @@ internal class PaparazziCallback(
 
   fun setEnableShadow(enableShadow: Boolean) {
     this.enableShadow = enableShadow
+  }
+
+
+  override fun findClass(name: String): Class<*> {
+    val clazz = loadedClasses[name]
+    logger.verbose("loadClassA($name)")
+
+    try {
+      if (clazz != null) {
+        return clazz
+      }
+      val clazz2 = Class.forName(name)
+      logger.verbose("loadClassB($name)")
+      loadedClasses[name] = clazz2
+      return clazz2
+    } catch (e: LinkageError) {
+      throw ClassNotFoundException("error loading class $name", e)
+    } catch (e: ExceptionInInitializerError) {
+      throw ClassNotFoundException("error loading class $name", e)
+    } catch (e: ClassNotFoundException) {
+      throw ClassNotFoundException("error loading class $name", e)
+    }
   }
 
   private fun ResourceReference.transformStyleResource() =

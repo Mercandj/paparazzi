@@ -68,6 +68,7 @@ data class DeviceConfig(
   val orientation: ScreenOrientation = ScreenOrientation.PORTRAIT,
   val nightMode: NightMode = NOTNIGHT,
   val density: Density = Density.XHIGH,
+  val fontScale: Float = 1f,
   val ratio: ScreenRatio = ScreenRatio.NOTLONG,
   val size: ScreenSize = ScreenSize.NORMAL,
   val keyboard: Keyboard = Keyboard.NOKEY,
@@ -117,8 +118,10 @@ data class DeviceConfig(
    */
 
   companion object {
+    @JvmField
     val NEXUS_4 = DeviceConfig()
 
+    @JvmField
     val NEXUS_5 = DeviceConfig(
         screenHeight = 1920,
         screenWidth = 1080,
@@ -136,6 +139,7 @@ data class DeviceConfig(
         released = "October 31, 2013"
     )
 
+    @JvmField
     val NEXUS_7 = DeviceConfig(
         screenHeight = 1920,
         screenWidth = 1200,
@@ -153,6 +157,7 @@ data class DeviceConfig(
         released = "July 26, 2013"
     )
 
+    @JvmField
     val NEXUS_10 = DeviceConfig(
         screenHeight = 1600,
         screenWidth = 2560,
@@ -170,6 +175,7 @@ data class DeviceConfig(
         released = "November 13, 2012"
     )
 
+    @JvmField
     val NEXUS_5_LAND = DeviceConfig(
         screenHeight = 1080,
         screenWidth = 1920,
@@ -187,6 +193,7 @@ data class DeviceConfig(
         released = "October 31, 2013"
     )
 
+    @JvmField
     val NEXUS_7_2012 = DeviceConfig(
         screenHeight = 1280,
         screenWidth = 800,
@@ -204,6 +211,7 @@ data class DeviceConfig(
         released = "July 13, 2012"
     )
 
+    @JvmField
     val PIXEL_C = DeviceConfig(
         screenHeight = 1800,
         screenWidth = 2560,
@@ -221,6 +229,7 @@ data class DeviceConfig(
         released = "December 8, 2015"
     )
 
+    @JvmField
     val PIXEL = DeviceConfig(
         screenHeight = 1920,
         screenWidth = 1080,
@@ -238,6 +247,7 @@ data class DeviceConfig(
         released = "October 20, 2016"
     )
 
+    @JvmField
     val PIXEL_XL = DeviceConfig(
         screenHeight = 2560,
         screenWidth = 1440,
@@ -255,6 +265,7 @@ data class DeviceConfig(
         released = "October 20, 2016"
     )
 
+    @JvmField
     val PIXEL_2 = DeviceConfig(
         screenHeight = 1920,
         screenWidth = 1080,
@@ -272,6 +283,7 @@ data class DeviceConfig(
         released = "October 19, 2017"
     )
 
+    @JvmField
     val PIXEL_2_XL = DeviceConfig(
         screenHeight = 2880,
         screenWidth = 1440,
@@ -289,6 +301,7 @@ data class DeviceConfig(
         released = "October 19, 2017"
     )
 
+    @JvmField
     val PIXEL_3 = DeviceConfig(
         screenHeight = 2160,
         screenWidth = 1080,
@@ -306,6 +319,7 @@ data class DeviceConfig(
         released = "October 18, 2018"
     )
 
+    @JvmField
     val PIXEL_3_XL = DeviceConfig(
         screenHeight = 2960,
         screenWidth = 1440,
@@ -323,6 +337,7 @@ data class DeviceConfig(
         released = "October 18, 2018"
     )
 
+    @JvmField
     val PIXEL_3A = DeviceConfig(
         screenHeight = 2220,
         screenWidth = 1080,
@@ -340,6 +355,7 @@ data class DeviceConfig(
         released = "May 7, 2019"
     )
 
+    @JvmField
     val PIXEL_3A_XL = DeviceConfig(
         screenHeight = 2160,
         screenWidth = 1080,
@@ -357,6 +373,7 @@ data class DeviceConfig(
         released = "May 7, 2019"
     )
 
+    @JvmField
     val PIXEL_4 = DeviceConfig(
         screenHeight = 2280,
         screenWidth = 1080,
@@ -374,6 +391,7 @@ data class DeviceConfig(
         released = "October 24, 2019"
     )
 
+    @JvmField
     val PIXEL_4_XL = DeviceConfig(
         screenHeight = 3040,
         screenWidth = 1440,
@@ -391,6 +409,7 @@ data class DeviceConfig(
         released = "October 24, 2019"
     )
 
+    @JvmField
     val PIXEL_4A = DeviceConfig(
         screenHeight = 2340,
         screenWidth = 1080,
@@ -406,6 +425,24 @@ data class DeviceConfig(
         softButtons = true,
         navigation = Navigation.NONAV,
         released = "August 20, 2020"
+    )
+
+    @JvmField
+    val PIXEL_5 = DeviceConfig(
+      screenHeight = 2340,
+      screenWidth = 1080,
+      xdpi = 442,
+      ydpi = 444,
+      orientation = ScreenOrientation.PORTRAIT,
+      density = Density.DPI_440,
+      ratio = ScreenRatio.LONG,
+      size = ScreenSize.NORMAL,
+      keyboard = Keyboard.NOKEY,
+      touchScreen = TouchScreen.FINGER,
+      keyboardState = KeyboardState.SOFT,
+      softButtons = true,
+      navigation = Navigation.NONAV,
+      released = "October 15, 2020"
     )
 
     private const val TAG_ATTR = "attr"

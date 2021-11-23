@@ -15,11 +15,16 @@
  */
 package app.cash.paparazzi
 
+import android.animation.AnimationHandler
 import android.content.Context
 import android.content.res.Resources
+import android.graphics.Bitmap
+import android.os.Handler_Delegate
+import android.os.SystemClock_Delegate
 import android.util.AttributeSet
+import android.util.DisplayMetrics
 import android.view.BridgeInflater
-import android.view.Choreographer_Delegate
+import android.view.Choreographer
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +33,8 @@ import app.cash.paparazzi.agent.AgentTestRule
 import app.cash.paparazzi.agent.InterceptorRegistrar
 import app.cash.paparazzi.internal.EditModeInterceptor
 import app.cash.paparazzi.internal.ImageUtils
+import app.cash.paparazzi.internal.MatrixMatrixMultiplicationInterceptor
+import app.cash.paparazzi.internal.MatrixVectorMultiplicationInterceptor
 import app.cash.paparazzi.internal.parsers.LayoutPullParser
 import app.cash.paparazzi.internal.PaparazziCallback
 import app.cash.paparazzi.internal.PaparazziLogger
@@ -38,12 +45,14 @@ import com.android.ide.common.rendering.api.RenderSession
 import com.android.ide.common.rendering.api.Result
 import com.android.ide.common.rendering.api.Result.Status.ERROR_UNKNOWN
 import com.android.ide.common.rendering.api.SessionParams
+import com.android.internal.lang.System_Delegate
+import com.android.layoutlib.bridge.Bridge
+import com.android.ide.common.rendering.api.SessionParams.RenderingMode
 import com.android.layoutlib.bridge.Bridge.cleanupThread
 import com.android.layoutlib.bridge.Bridge.prepareThread
 import com.android.layoutlib.bridge.BridgeRenderSession
 import com.android.layoutlib.bridge.impl.RenderAction
 import com.android.layoutlib.bridge.impl.RenderSessionImpl
-import com.android.tools.layoutlib.java.System_Delegate
 import org.junit.rules.TestRule
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
@@ -53,13 +62,15 @@ import java.lang.reflect.Modifier
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
-class Paparazzi(
+class Paparazzi @JvmOverloads constructor(
   private val environment: Environment = detectEnvironment(),
   private val deviceConfig: DeviceConfig = DeviceConfig.NEXUS_5,
   private val theme: String = "android:Theme.Material.NoActionBar.Fullscreen",
+  private val renderingMode: RenderingMode = RenderingMode.NORMAL,
   private val appCompatEnabled: Boolean = true,
   private val maxPercentDifference: Double = 0.1,
-  private val snapshotHandler: SnapshotHandler = determineHandler(maxPercentDifference)
+  private val snapshotHandler: SnapshotHandler = determineHandler(maxPercentDifference),
+  private val renderExtensions: Set<RenderExtension> = setOf()
 ) : TestRule {
   private val THUMBNAIL_SIZE = 1000
 
@@ -69,7 +80,6 @@ class Paparazzi(
   private lateinit var renderSession: RenderSessionImpl
   private lateinit var bridgeRenderSession: RenderSession
   private var testName: TestName? = null
-  private val renderExtensions = LinkedHashSet<RenderExtension>()
 
   val layoutInflater: LayoutInflater
     get() = RenderAction.getCurrentContext().getSystemService("layout_inflater") as BridgeInflater
@@ -104,6 +114,7 @@ class Paparazzi(
 
     registerFontLookupInterceptionIfResourceCompatDetected()
     registerViewEditModeInterception()
+    registerMatrixMultiplyInterception()
 
     val outerRule = AgentTestRule()
     return outerRule.apply(statement, description)
@@ -112,7 +123,8 @@ class Paparazzi(
   fun prepare(description: Description) {
     forcePlatformSdkVersion(environment.compileSdkVersion)
 
-    val layoutlibCallback = PaparazziCallback(logger, environment.packageName)
+    val layoutlibCallback =
+      PaparazziCallback(logger, environment.packageName, environment.resourcePackageNames)
     layoutlibCallback.initResources()
 
     testName = description.toTestName()
@@ -124,7 +136,7 @@ class Paparazzi(
         .copy(
             layoutPullParser = LayoutPullParser.createFromString(contentRoot),
             deviceConfig = deviceConfig,
-            renderingMode = SessionParams.RenderingMode.V_SCROLL
+            renderingMode = renderingMode
         )
         .withTheme(theme)
 
@@ -132,6 +144,7 @@ class Paparazzi(
     renderSession = createRenderSession(sessionParams)
     prepareThread()
     renderSession.init(sessionParams.timeout)
+    Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEVICE_STABLE)
 
     // requires LayoutInflater to be created, which is a side-effect of RenderSessionImpl.init()
     if (appCompatEnabled) {
@@ -152,20 +165,24 @@ class Paparazzi(
 
   fun <V : View> inflate(@LayoutRes layoutId: Int): V = layoutInflater.inflate(layoutId, null) as V
 
+  @JvmOverloads
   fun snapshot(
     view: View,
     name: String? = null,
     deviceConfig: DeviceConfig? = null,
-    theme: String? = null
+    theme: String? = null,
+    renderingMode: RenderingMode? = null
   ) {
-    takeSnapshots(view, name, deviceConfig, theme, 0, -1, 1)
+    takeSnapshots(view, name, deviceConfig, theme, renderingMode, 0, -1, 1)
   }
 
+  @JvmOverloads
   fun gif(
     view: View,
     name: String? = null,
     deviceConfig: DeviceConfig? = null,
     theme: String? = null,
+    renderingMode: RenderingMode? = null,
     start: Long = 0L,
     end: Long = 500L,
     fps: Int = 30
@@ -176,15 +193,7 @@ class Paparazzi(
     val durationMillis = (end - start).toInt()
     val frameCount = (durationMillis * fps) / 1000 + 1
     val startNanos = TimeUnit.MILLISECONDS.toNanos(start)
-    takeSnapshots(view, name, deviceConfig, theme, startNanos, fps, frameCount)
-  }
-
-  fun addRenderExtension(renderExtension: RenderExtension) {
-    renderExtensions.add(renderExtension)
-  }
-
-  fun removeRenderExtension(renderExtension: RenderExtension) {
-    renderExtensions.remove(renderExtension)
+    takeSnapshots(view, name, deviceConfig, theme, renderingMode, startNanos, fps, frameCount)
   }
 
   private fun takeSnapshots(
@@ -192,13 +201,15 @@ class Paparazzi(
     name: String?,
     deviceConfig: DeviceConfig? = null,
     theme: String? = null,
+    renderingMode: RenderingMode? = null,
     startNanos: Long,
     fps: Int,
     frameCount: Int
   ) {
-    if (deviceConfig != null || theme != null) {
+    if (deviceConfig != null || theme != null || renderingMode != null) {
       renderSession.release()
       bridgeRenderSession.dispose()
+      cleanupThread()
 
       sessionParamsBuilder = sessionParamsBuilder
           .copy(
@@ -214,9 +225,15 @@ class Paparazzi(
         sessionParamsBuilder = sessionParamsBuilder.withTheme(theme)
       }
 
+      if (renderingMode != null) {
+        sessionParamsBuilder = sessionParamsBuilder.copy(renderingMode = renderingMode)
+      }
+
       val sessionParams = sessionParamsBuilder.build()
       renderSession = createRenderSession(sessionParams)
+      prepareThread()
       renderSession.init(sessionParams.timeout)
+      Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEVICE_STABLE)
       bridgeRenderSession = createBridgeSession(renderSession, renderSession.inflate())
     }
 
@@ -225,13 +242,17 @@ class Paparazzi(
     val frameHandler = snapshotHandler.newFrameHandler(snapshot, frameCount, fps)
     frameHandler.use {
       val viewGroup = bridgeRenderSession.rootViews[0].viewObject as ViewGroup
+      val modifiedView = renderExtensions.fold(view) { view, renderExtension ->
+        renderExtension.renderView(view)
+      }
+
+      System_Delegate.setBootTimeNanos(0L)
       try {
         withTime(0L) {
           // Initialize the choreographer at time=0.
-          Choreographer_Delegate.doFrame(System_Delegate.nanoTime())
         }
 
-        viewGroup.addView(view)
+        viewGroup.addView(modifiedView)
         for (frame in 0 until frameCount) {
           val nowNanos = (startNanos + (frame * 1_000_000_000.0 / fps)).toLong()
           withTime(nowNanos) {
@@ -240,15 +261,13 @@ class Paparazzi(
               throw result.exception
             }
 
-            var image = bridgeRenderSession.image
-            renderExtensions.forEach {
-              image = it.render(snapshot = snapshot, view = view, image = image)
-            }
+            val image = bridgeRenderSession.image
             frameHandler.handle(scaleImage(image))
           }
         }
       } finally {
-        viewGroup.removeView(view)
+        viewGroup.removeView(modifiedView)
+        AnimationHandler.sAnimatorHandler.set(null)
       }
     }
   }
@@ -260,13 +279,29 @@ class Paparazzi(
     val frameNanos = TIME_OFFSET_NANOS + timeNanos
 
     // Execute the block at the requested time.
-    System_Delegate.setBootTimeNanos(frameNanos)
     System_Delegate.setNanosTime(frameNanos)
+
+    val choreographer = Choreographer.getInstance()
+    val areCallbacksRunningField = choreographer::class.java.getDeclaredField("mCallbacksRunning")
+    areCallbacksRunningField.isAccessible = true
+
     try {
+      areCallbacksRunningField.setBoolean(choreographer, true)
+
+      // https://android.googlesource.com/platform/frameworks/layoutlib/+/d58aa4703369e109b24419548f38b422d5a44738/bridge/src/com/android/layoutlib/bridge/BridgeRenderSession.java#171
+      // BridgeRenderSession.executeCallbacks aggressively tears down the main Looper and BridgeContext, so we call the static delegates ourselves.
+      Handler_Delegate.executeCallbacks()
+      val currentTimeMs = SystemClock_Delegate.uptimeMillis()
+      val choreographerCallbacks =
+        RenderAction.getCurrentContext().sessionInteractiveData.choreographerCallbacks
+      choreographerCallbacks.execute(currentTimeMs, Bridge.getLog())
+
       block()
+    } catch (e: Throwable) {
+      Bridge.getLog().error("broken", "Failed executing Choreographer#doFrame", e, null, null)
+      throw e
     } finally {
-      System_Delegate.setNanosTime(0L)
-      System_Delegate.setBootTimeNanos(0L)
+      areCallbacksRunningField.setBoolean(choreographer, false)
     }
   }
 
@@ -359,7 +394,7 @@ class Paparazzi(
 
       appCompatDelegateClass = Class.forName("androidx.appcompat.app.AppCompatDelegate")
     } catch (e: ClassNotFoundException) {
-      logger.info("AppCompat not found on classpath, exiting...")
+      logger.verbose("AppCompat not found on classpath")
       return
     }
 
@@ -435,7 +470,7 @@ class Paparazzi(
           resourcesCompatClass, "getFont", ResourcesInterceptor::class.java
       )
     } catch (e: ClassNotFoundException) {
-      logger.info("ResourceCompat not found on classpath...")
+      logger.verbose("ResourceCompat not found on classpath")
     }
   }
 
@@ -443,6 +478,17 @@ class Paparazzi(
     val viewClass = Class.forName("android.view.View")
     InterceptorRegistrar.addMethodInterceptor(
         viewClass, "isInEditMode", EditModeInterceptor::class.java
+    )
+  }
+
+  private fun registerMatrixMultiplyInterception() {
+    val matrixClass = Class.forName("android.opengl.Matrix")
+    InterceptorRegistrar.addMethodInterceptors(
+      matrixClass,
+      setOf(
+        "multiplyMM" to MatrixMatrixMultiplicationInterceptor::class.java,
+        "multiplyMV" to MatrixVectorMultiplicationInterceptor::class.java
+      )
     )
   }
 

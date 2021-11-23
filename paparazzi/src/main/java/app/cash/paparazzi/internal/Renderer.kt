@@ -32,6 +32,7 @@ import java.awt.image.BufferedImage
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
+import java.util.Locale
 
 /** View rendering. */
 internal class Renderer(
@@ -45,7 +46,6 @@ internal class Renderer(
 
   /** Initialize the bridge and the resource maps. */
   fun prepare(): SessionParamsBuilder {
-    val platformDataDir = File("${environment.platformDir}/data")
     val platformDataResDir = File("${environment.platformDir}/data/res")
     val frameworkResources = FrameworkResources(FolderWrapper(platformDataResDir)).apply {
       loadResources()
@@ -69,18 +69,27 @@ internal class Renderer(
         .plusFlag(RenderParamsFlags.FLAG_DO_NOT_RENDER_ON_CREATE, true)
         .withTheme("AppTheme", true)
 
+    val platformDataDir = File("${environment.platformDataDir}/data")
     val fontLocation = File(platformDataDir, "fonts")
+    val nativeLibLocation = File(platformDataDir, getNativeLibDir())
+    val icuLocation = File(platformDataDir, "icu" + File.separator + "icudt66l.dat")
     val buildProp = File(environment.platformDir, "build.prop")
     val attrs = File(platformDataResDir, "values" + File.separator + "attrs.xml")
+    val systemProperties = DeviceConfig.loadProperties(buildProp) + mapOf(
+      // We want Choreographer.USE_FRAME_TIME to be false so it uses System_Delegate.nanoTime()
+      "debug.choreographer.frametime" to "false"
+    )
     bridge = Bridge().apply {
-      init(
-          DeviceConfig.loadProperties(buildProp),
+      check(
+        init(
+          systemProperties,
           fontLocation,
-          null,
-          null,
+          nativeLibLocation.path,
+          icuLocation.path,
           DeviceConfig.getEnumMap(attrs),
           logger
-      )
+        )
+      ) { "Failed to init Bridge." }
     }
     Bridge.getLock()
         .lock()
@@ -92,6 +101,16 @@ internal class Renderer(
     }
 
     return sessionParamsBuilder
+  }
+
+  private fun getNativeLibDir(): String {
+    val osName = System.getProperty("os.name").toLowerCase(Locale.US)
+    val osLabel = when {
+      osName.startsWith("windows") -> "win"
+      osName.startsWith("mac") -> "mac"
+      else -> "linux"
+    }
+    return "$osLabel/lib64"
   }
 
   override fun close() {

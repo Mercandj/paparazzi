@@ -9,11 +9,12 @@ repositories {
     url "file://${projectDir.absolutePath}/../../../../../build/localMaven"
   }
   mavenCentral()
+  //mavenLocal()
   google()
 }
 
 android {
-  compileSdkVersion 29
+  compileSdkVersion 30
   defaultConfig {
     minSdkVersion 25
     vectorDrawables.useSupportLibrary = true
